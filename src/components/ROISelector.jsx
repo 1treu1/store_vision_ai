@@ -1,16 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { MousePointer2, RefreshCcw, Save, Trash2, Layers } from 'lucide-react';
+import { Play, RefreshCcw, Layers, Trash2, Cpu } from 'lucide-react';
 import FloatingToolbar from './FloatingToolbar';
 
-const COLORS = [
-  '#8b5cf6', // Violet
-  '#3b82f6', // Blue
-  '#ef4444', // Red
-  '#10b981', // Emerald
-  '#f59e0b', // Amber
-  '#ec4899', // Pink
-  '#06b6d4', // Cyan
-];
+const COLORS = ['#a855f7', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#ec4899'];
 
 const ROISelector = ({ videoFile }) => {
   const canvasRef = useRef(null);
@@ -19,15 +11,14 @@ const ROISelector = ({ videoFile }) => {
   ]);
   const [activeAreaId, setActiveAreaId] = useState(1);
   const [frameData, setFrameData] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
 
-  // Extract first frame
   useEffect(() => {
     if (!videoFile) return;
     const video = document.createElement('video');
     const url = URL.createObjectURL(videoFile);
     video.src = url;
-    video.preload = 'auto';
     video.onloadedmetadata = () => { video.currentTime = 0; };
     video.onseeked = () => {
       const canvas = document.createElement('canvas');
@@ -41,7 +32,6 @@ const ROISelector = ({ videoFile }) => {
     };
   }, [videoFile]);
 
-  // Draw logic
   useEffect(() => {
     if (!frameData || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -55,129 +45,138 @@ const ROISelector = ({ videoFile }) => {
 
       areas.forEach((area) => {
         const isActive = area.id === activeAreaId;
-        const points = area.points;
-        
-        if (points.length > 0) {
+        if (area.points.length > 0) {
           ctx.beginPath();
-          ctx.moveTo(points[0].x, points[0].y);
-          for (let i = 1; i < points.length; i++) {
-            ctx.lineTo(points[i].x, points[i].y);
-          }
-          if (points.length >= 3) {
-            ctx.fillStyle = `${area.color}44`;
+          ctx.moveTo(area.points[0].x, area.points[0].y);
+          area.points.forEach(p => ctx.lineTo(p.x, p.y));
+          if (area.points.length >= 3) {
+            ctx.fillStyle = `${area.color}33`;
             ctx.fill();
           }
           ctx.strokeStyle = area.color;
           ctx.lineWidth = isActive ? 4 : 2;
-          if (isActive) ctx.setLineDash([5, 5]);
           ctx.stroke();
-          ctx.setLineDash([]);
 
-          // Draw Label for the Area
-          const firstPoint = points[0];
+          // Minimalist label
           ctx.fillStyle = area.color;
-          ctx.font = 'bold 16px Inter';
-          const text = area.name;
-          const textWidth = ctx.measureText(text).width;
-          ctx.fillRect(firstPoint.x, firstPoint.y - 30, textWidth + 10, 25);
-          ctx.fillStyle = 'white';
-          ctx.fillText(text, firstPoint.x + 5, firstPoint.y - 12);
+          ctx.font = 'bold 12px Inter';
+          ctx.fillText(area.name.toUpperCase(), area.points[0].x, area.points[0].y - 10);
         }
-
-        points.forEach((p) => {
+        area.points.forEach(p => {
           ctx.beginPath();
-          ctx.arc(p.x, p.y, isActive ? 6 : 4, 0, Math.PI * 2);
-          ctx.fillStyle = area.color;
+          ctx.arc(p.x, p.y, isActive ? 5 : 3, 0, Math.PI * 2);
+          ctx.fillStyle = isActive ? 'white' : area.color;
           ctx.fill();
-          ctx.strokeStyle = 'white';
-          ctx.lineWidth = isActive ? 2 : 1;
-          ctx.stroke();
         });
       });
     };
-  }, [frameData, areas, activeAreaId, canvasSize]);
+  }, [frameData, areas, activeAreaId]);
 
   const handleCanvasClick = (e) => {
-    if (!activeAreaId) return;
+    if (isProcessing) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const scaleX = canvasSize.width / rect.width;
-    const scaleY = canvasSize.height / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-
-    setAreas(prev => prev.map(area => {
-      if (area.id === activeAreaId) {
-        return { ...area, points: [...area.points, { x, y }] };
-      }
-      return area;
-    }));
-  };
-
-  const addArea = () => {
-    const nextId = areas.length > 0 ? Math.max(...areas.map(a => a.id)) + 1 : 1;
-    const nextColor = COLORS[nextId % COLORS.length];
-    const newArea = { id: nextId, points: [], color: nextColor, name: `Categoría ${nextId}` };
-    setAreas([...areas, newArea]);
-    setActiveAreaId(nextId);
-  };
-
-  const removeArea = (id) => {
-    const newAreas = areas.filter(a => a.id !== id);
-    setAreas(newAreas);
-    if (activeAreaId === id) {
-      setActiveAreaId(newAreas.length > 0 ? newAreas[0].id : null);
+    
+    const canvasRatio = canvasSize.width / canvasSize.height;
+    const containerRatio = rect.width / rect.height;
+    
+    let renderWidth, renderHeight, offsetX, offsetY;
+    if (containerRatio > canvasRatio) {
+      renderHeight = rect.height;
+      renderWidth = rect.height * canvasRatio;
+      offsetX = (rect.width - renderWidth) / 2;
+      offsetY = 0;
+    } else {
+      renderWidth = rect.width;
+      renderHeight = rect.width / canvasRatio;
+      offsetX = 0;
+      offsetY = (rect.height - renderHeight) / 2;
     }
+
+    const scaleX = canvasSize.width / renderWidth;
+    const scaleY = canvasSize.height / renderHeight;
+    
+    const x = (e.clientX - rect.left - offsetX) * scaleX;
+    const y = (e.clientY - rect.top - offsetY) * scaleY;
+
+    if (x < 0 || x > canvasSize.width || y < 0 || y > canvasSize.height) return;
+
+    setAreas(prev => prev.map(a => a.id === activeAreaId ? { ...a, points: [...a.points, { x, y }] } : a));
   };
 
-  const updateAreaName = (id, newName) => {
-    setAreas(prev => prev.map(area => 
-      area.id === id ? { ...area, name: newName } : area
-    ));
-  };
-
-  const saveROI = () => {
-    console.log("Exporting Areas:", areas);
-    alert("Exportación enviada a consola.");
+  const handleProcess = () => {
+    setIsProcessing(true);
+    setTimeout(() => setIsProcessing(false), 6000);
   };
 
   if (!frameData) return (
-    <div className="glass-card p-12 flex flex-col items-center gap-4 animate-fade-in">
-      <RefreshCcw className="animate-spin" color="var(--primary)" />
-      <p>Procesando primer frame...</p>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
+      <RefreshCcw className="animate-spin" size={32} color="var(--primary)" />
+      <span style={{ fontSize: '0.8rem', letterSpacing: '2px', color: 'var(--text-muted)' }}>INITIALIZING BUFFER...</span>
     </div>
   );
 
   return (
-    <div className="flex flex-col gap-6 animate-fade-in">
-      <div className="glass-card p-4 overflow-hidden" style={{ position: 'relative', minHeight: '400px' }}>
-        <canvas
-          ref={canvasRef}
-          width={canvasSize.width}
-          height={canvasSize.height}
-          onClick={handleCanvasClick}
-          style={{ width: '100%', height: 'auto', borderRadius: '8px', cursor: 'crosshair', display: 'block' }}
-        />
-        
-        <FloatingToolbar 
-          areas={areas}
-          activeAreaId={activeAreaId}
-          onAddArea={addArea}
-          onRemoveArea={removeArea}
-          onSetActiveArea={setActiveAreaId}
-          onUpdateAreaName={updateAreaName}
-        />
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      {isProcessing && <div className="scanner-line"></div>}
+
+      <canvas
+        ref={canvasRef}
+        width={canvasSize.width}
+        height={canvasSize.height}
+        onClick={handleCanvasClick}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', cursor: 'crosshair' }}
+      />
+
+      {/* Floating Category List (Right) */}
+      <div className="glass-hud" style={{
+        position: 'absolute', top: '20px', right: '20px', width: '200px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+          <Layers size={14} color="var(--text-muted)" />
+          <span style={{ fontSize: '0.7rem', fontWeight: '800', letterSpacing: '1px' }}>REGIONS OF INTEREST</span>
+        </div>
+        {areas.map(area => (
+          <div key={area.id} 
+            onClick={() => setActiveAreaId(area.id)}
+            style={{ 
+              display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer',
+              opacity: activeAreaId === area.id ? 1 : 0.5, transition: '0.2s'
+            }}>
+            <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: area.color }}></div>
+            <span style={{ fontSize: '0.75rem', fontWeight: '500' }}>{area.name}</span>
+          </div>
+        ))}
       </div>
 
-      <div className="flex justify-between items-center">
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', color: 'var(--text-muted)' }}>
-          <Layers size={18} />
-          <span>{areas.length} Categorías</span>
-        </div>
-        
-        <button className="btn-primary" onClick={saveROI} disabled={areas.every(a => a.points.length === 0)}>
-          <Save size={18} /> Exportar Proyecto
+      {/* Main Action Button (Bottom Right) */}
+      <div style={{ position: 'absolute', bottom: '30px', right: '30px', zIndex: 110 }}>
+        <button 
+          className="btn-process" 
+          onClick={handleProcess} 
+          disabled={isProcessing || areas.every(a => a.points.length < 3)}
+        >
+          {isProcessing ? <Cpu className="animate-spin" /> : <Play fill="white" />}
+          <span>{isProcessing ? 'ANALYZING FLUX...' : 'START PROCESSING'}</span>
         </button>
       </div>
+
+      <FloatingToolbar 
+        areas={areas}
+        activeAreaId={activeAreaId}
+        onAddArea={() => {
+          const id = areas.length + 1;
+          const newArea = { id, points: [], color: COLORS[id % COLORS.length], name: `Categoría ${id}` };
+          setAreas([...areas, newArea]);
+          setActiveAreaId(id);
+        }}
+        onRemoveArea={(id) => {
+          const filtered = areas.filter(a => a.id !== id);
+          setAreas(filtered);
+          if (activeAreaId === id) setActiveAreaId(filtered[0]?.id);
+        }}
+        onSetActiveArea={setActiveAreaId}
+        onUpdateAreaName={(id, name) => setAreas(areas.map(a => a.id === id ? { ...a, name } : a))}
+      />
     </div>
   );
 };

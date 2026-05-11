@@ -1,52 +1,71 @@
 import React, { useState } from 'react'
 import VideoUploader from './components/VideoUploader'
 import ROISelector from './components/ROISelector'
-import { Layout, Shield, BrainCircuit } from 'lucide-react'
+import { BrainCircuit, Activity } from 'lucide-react'
 
 function App() {
   const [videoFile, setVideoFile] = useState(null)
 
   return (
-    <div className="container">
-      <header style={{ marginBottom: '3rem', textAlign: 'center' }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '12px', marginBottom: '1rem' }}>
-          <div style={{ backgroundColor: 'var(--primary)', padding: '8px', borderRadius: '12px' }}>
-            <BrainCircuit size={32} color="white" />
+    <div className="hud-container">
+      {/* Immersive Header */}
+      <header style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        padding: '0 1rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ 
+            background: 'linear-gradient(135deg, var(--primary), #7c3aed)', 
+            padding: '8px', 
+            borderRadius: '10px',
+            boxShadow: '0 0 15px var(--primary-glow)'
+          }}>
+            <BrainCircuit size={24} color="white" />
           </div>
-          <h1 style={{ fontSize: '2.5rem', margin: 0 }}>Store Vision AI</h1>
+          <h1 style={{ fontSize: '1.25rem', letterSpacing: '1px', fontWeight: '500', color: '#fff' }}>
+            STORE VISION <span style={{ color: 'var(--text-muted)', fontWeight: '300' }}>AI</span>
+          </h1>
         </div>
-        <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', maxWidth: '600px', margin: '0 auto' }}>
-          Herramienta de precisión para la definición de Regiones de Interés (ROI) en flujos de video para Computer Vision.
-        </p>
+
+        <div className="glass-hud" style={{ padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: videoFile ? '#22c55e' : '#f59e0b' }}></div>
+          <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-muted)' }}>
+            {videoFile ? 'READY' : 'WAITING FOR SOURCE'}
+          </span>
+        </div>
       </header>
 
-      <main style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        <section>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1.5rem' }}>
-            <Shield size={20} color="var(--primary)" />
-            <h2 style={{ fontSize: '1.5rem' }}>1. Carga de Assets</h2>
-          </div>
-          <VideoUploader 
-            onVideoSelect={setVideoFile} 
-            selectedFile={videoFile} 
-          />
-        </section>
-
-        {videoFile && (
-          <section className="animate-fade-in">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1.5rem' }}>
-              <Layout size={20} color="var(--primary)" />
-              <h2 style={{ fontSize: '1.5rem' }}>2. Definición de ROI</h2>
+      {/* Main Workspace */}
+      <main className="video-workspace">
+        {!videoFile ? (
+          <div style={{ 
+            height: '100%', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            background: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)'
+          }}>
+            <div style={{ maxWidth: '500px', width: '100%', padding: '2rem' }}>
+              <VideoUploader onVideoSelect={setVideoFile} selectedFile={videoFile} />
             </div>
-            <ROISelector videoFile={videoFile} />
-          </section>
+          </div>
+        ) : (
+          <ROISelector videoFile={videoFile} />
         )}
       </main>
 
-      <footer style={{ marginTop: '5rem', padding: '2rem 0', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-          &copy; 2026 Store Vision AI - Senior Data Scientist & AI Engineering Tool
-        </p>
+      {/* Footer Info */}
+      <footer style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        padding: '0.5rem',
+        color: 'var(--text-muted)',
+        fontSize: '0.7rem',
+        letterSpacing: '1px'
+      }}>
+        SYSTEM ENGINE V2.0 // NEURAL GROUNDING INTERFACE
       </footer>
     </div>
   )
