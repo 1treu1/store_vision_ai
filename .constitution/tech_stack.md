@@ -1,14 +1,19 @@
 # Tech Stack: Video ROI Selector
 
-## Frontend Core
--   **Framework**: [React 18+](https://reactjs.org/) (Functional Components, Hooks).
--   **Build Tool**: [Vite](https://vitejs.dev/) (Fast Refresh, Optimized Bundling).
--   **Language**: JavaScript (ES6+).
+## Frontend Stack
+-   **Framework**: React (Vite)
+-   **Styling**: CSS Vanilla (Glassmorphism / HUD Design)
+-   **Icons**: Lucide-React
+-   **Architecture**: Hook-based Modular Architecture
 
-## Styling & UI
--   **CSS**: Vanilla CSS with modern features (Variables, Flexbox/Grid, Glassmorphism).
--   **Icons**: [Lucide React](https://lucide.dev/) for clean, consistent iconography.
--   **Typography**: Inter / Outfit via Google Fonts.
+## Backend / AI Stack (Phase 5)
+-   **Framework**: FastAPI (Python 3.10+)
+-   **Real-time Communication**: WebSockets (Streaming analytics to HUD)
+-   **AI Framework**: PyTorch (Only `.pt` models)
+-   **Computer Vision**: OpenCV (cv2)
+-   **Object Detection/Tracking**: Ultralytics (YOLOv8)
+-   **Config Management**: python-dotenv (.env)
+-   **Data Processing**: Pandas / NumPy
 
 ## Video & Canvas Handling
 -   **Video Processing**: Browser-native HTML5 Video API for frame seeking.

@@ -9,6 +9,7 @@ To provide a seamless, high-performance web interface for data scientists and AI
 3.  **Multi-Area Support**: Allow defining multiple distinct ROIs, each color-coded for visual clarity.
 4.  **Interoperability**: Generate standardized coordinate outputs (JSON/CSV) that can be easily consumed by downstream AI models.
 5.  **Premium UX**: Deliver an immersive "HUD (Heads-Up Display)" Minimalist interface where the video takes the full workspace, with glassmorphism panels and smart floating tools.
+6.  **Edge Analytics**: Implement high-performance Python-based computer vision to count people, calculate dwell time, and classify gender using only `.pt` PyTorch models.
 
 ## Success Metrics
 -   Time from upload to ROI definition < 30 seconds.

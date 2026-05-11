@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Play, RefreshCcw, Cpu } from 'lucide-react';
 
-import { useVideoFrame } from '../../hooks/useVideoFrame';
-import { useROIAreas } from '../../hooks/useROIAreas';
+import { useVideoFrame } from '../hooks/useVideoFrame';
+import { useROIAreas } from '../hooks/useROIAreas';
 
 import ROICanvas from './Canvas/ROICanvas';
 import LayerPanel from './HUD/LayerPanel';
