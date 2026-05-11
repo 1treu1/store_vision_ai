@@ -8,7 +8,7 @@ To provide a seamless, high-performance web interface for data scientists and AI
 2.  **Precision**: Enable multi-point polygon selection on the exact first frame of a video using a floating toolbar.
 3.  **Multi-Area Support**: Allow defining multiple distinct ROIs, each color-coded for visual clarity.
 4.  **Interoperability**: Generate standardized coordinate outputs (JSON/CSV) that can be easily consumed by downstream AI models.
-5.  **Premium UX**: Deliver a professional, "Apple-like" aesthetic with a floating control bar, smooth transitions, and intuitive canvas interactions.
+5.  **Premium UX**: Deliver an immersive "HUD (Heads-Up Display)" Minimalist interface where the video takes the full workspace, with glassmorphism panels and smart floating tools.
 
 ## Success Metrics
 -   Time from upload to ROI definition < 30 seconds.

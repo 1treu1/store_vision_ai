@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import VideoUploader from './components/VideoUploader'
+import VideoUploader from './components/Upload/VideoUploader'
 import ROISelector from './components/ROISelector'
 import { BrainCircuit, Activity } from 'lucide-react'
 
