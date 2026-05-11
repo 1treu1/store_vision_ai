@@ -22,8 +22,11 @@
 -   [x] Micro-animations for UI transitions (HUD).
 -   [x] Architectural refactoring (Clean Architecture).
 
-## Phase 5: Python AI Backend (New)
--   [ ] Architecture definition for Python codebase (Tracking & Demographics).
--   [ ] Implementation of People Counting and Dwell Time tracking inside ROIs using `.pt` models.
--   [ ] Integration of Gender Classification model (Men/Women).
--   [ ] Creation of processing pipeline (loading ROI JSON, parsing video, outputting stats).
+## Phase 5: Python AI Backend (In Progress)
+-   [x] Architecture definition for Python codebase (FastAPI + WebSockets).
+-   [x] Implementation of People Counting and Dwell Time tracking inside ROIs using YOLOv8.
+-   [x] Real-time WebSocket frame streaming with annotated bounding boxes.
+-   [x] Analytics Dashboard (gender pie, occupancy timeline, dwell distribution, zone activity).
+-   [x] Configurable confidence/IOU thresholds via `.env`.
+-   [/] Gender Classification via DeepFace (model auto-downloads on first run).
+-   [ ] Export final analytics report as CSV/JSON.

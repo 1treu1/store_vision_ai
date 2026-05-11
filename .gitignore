@@ -22,3 +22,32 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+venv/
+.env
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints
+backend/venv/
+backend/.env
+backend/models/*.pt
+backend/models/*.onnx
+!backend/models/.gitkeep
+runs/
+.constirution/
+
+# Video files — use local paths only, do not commit
+*.mp4
+*.webm
+*.avi
+*.mkv
+*.part
+
+# AI model weights — download separately, do not commit
+models/
+*.pt
+*.onnx
+*.weights
+
+# DeepFace / InsightFace auto-downloaded weights cache
+.deepface/
