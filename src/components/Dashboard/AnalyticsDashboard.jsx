@@ -44,57 +44,26 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
   const women = summary.women ?? 0;
 
   // Gender pie data
-  const genderData = [
+  const genderData = React.useMemo(() => [
     { name: 'Men', value: men },
     { name: 'Women', value: women },
-    { name: 'Unknown', value: totalSeen - men - women },
-  ].filter(d => d.value > 0);
+    { name: 'Unknown', value: Math.max(0, totalSeen - men - women) },
+  ].filter(d => d.value > 0), [men, women, totalSeen]);
 
-  // Dwell time distribution — use the LAST known dwell per unique person
-  // (avoid counting the same person multiple times across history frames)
-  const latestDwellById = {};
-  history.forEach(h => {
-    (h.tracks || []).forEach(t => {
-      latestDwellById[t.id] = t.dwell_seconds || 0;
-    });
-  });
-  const uniqueTrackDwells = Object.values(latestDwellById);
+  // Use pre-calculated stats from backend (or defaults)
+  const stats = {
+    dwellBuckets: summary.dwell_buckets || [],
+    avgDwell: summary.avg_dwell || 0,
+    peak: summary.peak_occupancy || 0,
+    zoneActivity: summary.zone_activity || {}
+  };
 
-  const dwellBuckets = [
-    { name: '<5s', count: 0 },
-    { name: '5-15s', count: 0 },
-    { name: '15-30s', count: 0 },
-    { name: '>30s', count: 0 },
-  ];
-  uniqueTrackDwells.forEach(d => {
-    if (d < 5) dwellBuckets[0].count++;
-    else if (d < 15) dwellBuckets[1].count++;
-    else if (d < 30) dwellBuckets[2].count++;
-    else dwellBuckets[3].count++;
-  });
-
-  // Average dwell time — over unique persons only
-  const avgDwell = uniqueTrackDwells.length > 0
-    ? (uniqueTrackDwells.reduce((s, d) => s + d, 0) / uniqueTrackDwells.length).toFixed(1)
-    : 0;
-
-  // Peak occupancy from history
-  const peakOccupancy = history.reduce((max, h) => Math.max(max, h.active_people || 0), 0);
-
-  // Zone activity — count UNIQUE person IDs per zone (not occurrences)
-  const zoneUniqueIds = {};
-  history.forEach(h => {
-    (h.tracks || []).forEach(t => {
-      if (t.roi_id != null) {
-        if (!zoneUniqueIds[t.roi_id]) zoneUniqueIds[t.roi_id] = new Set();
-        zoneUniqueIds[t.roi_id].add(t.id);
-      }
-    });
-  });
-  const zoneActivity = Object.fromEntries(
-    Object.entries(zoneUniqueIds).map(([id, set]) => [id, set.size])
-  );
-
+  // Downsample history for the line chart if it's too large (limit to ~100 points)
+  const lineChartData = React.useMemo(() => {
+    if (history.length <= 120) return history;
+    const step = Math.ceil(history.length / 100);
+    return history.filter((_, i) => i % step === 0);
+  }, [history]);
 
   const tooltipStyle = { backgroundColor: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#f8fafc', fontSize: '0.7rem' };
 
@@ -130,8 +99,13 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
           <SectionTitle>KEY METRICS</SectionTitle>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             <KPICard label="TOTAL DETECTED" value={totalSeen} icon={Users} color="var(--primary)" />
-            <KPICard label="PEAK OCCUPANCY" value={peakOccupancy} icon={TrendingUp} color="#f59e0b" />
-            <KPICard label="AVG DWELL" value={`${avgDwell}s`} icon={Clock} color="#10b981" />
+            <KPICard label="PEAK OCCUPANCY" value={stats.peak} icon={TrendingUp} color="#f59e0b" />
+            <KPICard 
+              label="AVG DWELL" 
+              value={stats.avgDwell < 60 ? `${stats.avgDwell}s` : `${(stats.avgDwell / 60).toFixed(1)}m`} 
+              icon={Clock} 
+              color="#10b981" 
+            />
             <KPICard label="IN ROI NOW" value={summary.people_in_roi} icon={Activity} color="#3b82f6" />
           </div>
         </div>
@@ -142,7 +116,7 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
           {genderData.length > 0 ? (
             <ResponsiveContainer width="100%" height={180}>
               <PieChart>
-                <Pie data={genderData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
+                <Pie data={genderData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value" isAnimationActive={false}>
                   {genderData.map((entry) => (
                     <Cell key={entry.name} fill={GENDER_COLORS[entry.name]} />
                   ))}
@@ -160,14 +134,14 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
         <div>
           <SectionTitle>OCCUPANCY OVER TIME</SectionTitle>
           <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={history} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <LineChart data={lineChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
               <XAxis 
                 dataKey="ts" 
                 type="number"
                 domain={['auto', 'auto']}
                 tick={{ fontSize: 9, fill: '#64748b' }} 
-                tickFormatter={v => `${Math.round(v)}s`}
+                tickFormatter={v => v < 60 ? `${Math.round(v)}s` : `${(v / 60).toFixed(1)}m`}
                 minTickGap={30}
               />
               <YAxis 
@@ -177,7 +151,7 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
               />
               <Tooltip 
                 contentStyle={tooltipStyle} 
-                labelFormatter={v => `Time: ${parseFloat(v).toFixed(1)}s`} 
+                labelFormatter={v => v < 60 ? `Time: ${parseFloat(v).toFixed(1)}s` : `Time: ${(v / 60).toFixed(1)}m`} 
               />
               <Line 
                 type="monotone" 
@@ -186,7 +160,7 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
                 strokeWidth={2} 
                 dot={false} 
                 name="Active" 
-                animationDuration={300}
+                isAnimationActive={false}
               />
               <Line 
                 type="monotone" 
@@ -195,7 +169,7 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
                 strokeWidth={2} 
                 dot={false} 
                 name="In ROI" 
-                animationDuration={300}
+                isAnimationActive={false}
               />
             </LineChart>
           </ResponsiveContainer>
@@ -205,13 +179,13 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
         <div>
           <SectionTitle>DWELL TIME DISTRIBUTION</SectionTitle>
           <ResponsiveContainer width="100%" height={130}>
-            <BarChart data={dwellBuckets} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+            <BarChart data={stats.dwellBuckets} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
               <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#64748b' }} />
               <YAxis tick={{ fontSize: 9, fill: '#64748b' }} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="count" name="Persons" radius={[4, 4, 0, 0]}>
-                {dwellBuckets.map((_, i) => <Cell key={i} fill={DWELL_COLORS[i]} />)}
+              <Bar dataKey="count" name="Persons" radius={[4, 4, 0, 0]} isAnimationActive={false}>
+                {stats.dwellBuckets.map((_, i) => <Cell key={i} fill={DWELL_COLORS[i]} />)}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -223,7 +197,7 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
             <SectionTitle>ZONE ACTIVITY</SectionTitle>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {areas.map(area => {
-                const count = zoneActivity[area.id] || 0;
+                const count = stats.zoneActivity[area.id] || 0;
                 const pct = totalSeen > 0 ? (count / totalSeen) * 100 : 0;
                 return (
                   <div key={area.id}>
@@ -232,7 +206,7 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
                       <span style={{ fontSize: '0.7rem', color: area.color, fontWeight: 700 }}>{count} unique visitors</span>
                     </div>
                     <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px' }}>
-                      <div style={{ width: `${totalSeen > 0 ? (count / totalSeen) * 100 : 0}%`, height: '100%', background: area.color, borderRadius: '2px', transition: 'width 0.5s' }} />
+                      <div style={{ width: `${pct}%`, height: '100%', background: area.color, borderRadius: '2px', transition: 'width 0.5s' }} />
                     </div>
                   </div>
                 );

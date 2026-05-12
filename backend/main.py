@@ -98,8 +98,11 @@ def draw_annotations(frame, tracking_results, rois, tracker_state, id_map=None):
             g_icon = 'M' if track_data.get('gender') == 'Male' else ('F' if track_data.get('gender') == 'Female' else '?')
             dwell = track_data.get('dwell_seconds', 0)
             
+            # Format time: use 'm' if > 60s
+            time_str = f"{dwell:.1f}S" if dwell < 60 else f"{dwell/60:.1f}M"
+            
             label = f"ID:{track_id} [{g_icon}]"
-            if in_roi: label += f" {dwell:.1f}S"
+            if in_roi: label += f" {time_str}"
             
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
             cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw + 8, y1), COLOR_DARK, -1)
@@ -115,7 +118,9 @@ def draw_annotations(frame, tracking_results, rois, tracker_state, id_map=None):
             ghost_color = (120, 120, 120) # Gray
             cv2.rectangle(annotated, (gx1, gy1), (gx2, gy2), ghost_color, 1, cv2.LINE_4)
             
-            label = f"ID:{tid} [GHOST] {tdata.get('dwell_seconds', 0):.1f}S"
+            dwell = tdata.get('dwell_seconds', 0)
+            time_str = f"{dwell:.1f}S" if dwell < 60 else f"{dwell/60:.1f}M"
+            label = f"ID:{tid} [GHOST] {time_str}"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
             cv2.rectangle(annotated, (gx1, gy1 - th - 8), (gx1 + tw + 6, gy1), COLOR_DARK, -1)
             cv2.putText(annotated, label, (gx1 + 3, gy1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.35, ghost_color, 1, cv2.LINE_AA)
@@ -173,12 +178,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 if not ret:
                     break
 
-                # Process every 3rd frame for performance
+                # Process every 3rd frame for video performance
                 if frame_idx % 3 == 0:
                     video_timestamp = frame_idx / fps
                     results = detector.detect_and_track(frame)
-                    summary = tracker.update(results, rois, video_timestamp,
-                                             frame_bgr=frame, gender_classifier=gender_clf)
+                    
+                    # Heavy analytical update (Every 3rd processed frame = every 9-10 real frames)
+                    # We only calculate and send full tracks/gender occasionally
+                    should_calc_heavy = (frame_idx % 9 == 0)
+                    
+                    summary = tracker.update(
+                        results, rois, video_timestamp,
+                        frame_bgr=frame if should_calc_heavy else None, 
+                        gender_classifier=gender_clf if should_calc_heavy else None
+                    )
 
                     # Draw annotations using persistent ID mapping
                     tracker_state = {t['id']: t for t in summary['tracks']}
@@ -191,23 +204,37 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Resize for bandwidth efficiency (max width 960px)
                     h, w = annotated_frame.shape[:2]
                     if w > 960:
-                        scale = 960 / w
-                        annotated_frame = cv2.resize(annotated_frame, (960, int(h * scale)))
+                        new_h = int(h * (960 / w))
+                        annotated_frame = cv2.resize(annotated_frame, (960, new_h))
 
-                    # Encode as JPEG base64
-                    _, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-                    frame_b64 = base64.b64encode(buffer).decode('utf-8')
+                    _, buffer = cv2.imencode('.jpg', annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
 
-                    # Send only if connection is still alive
-                    if websocket.client_state.value == 1: # CONNECTED
-                        await websocket.send_json({
-                            "status": "processing",
-                            "frame": frame_idx,
-                            "timestamp": video_timestamp,
-                            "total_frames": total_frames,
-                            "frame_image": frame_b64,
-                            "analytics": summary
-                        })
+                    # Prepare payload
+                    payload = {
+                        "frame": frame_idx,
+                        "timestamp": video_timestamp,
+                        "total_frames": total_frames,
+                        "frame_image": frame_base64,
+                    }
+
+                    # Only send heavy analytics if calculated this frame
+                    if should_calc_heavy:
+                        payload["analytics"] = summary
+                    else:
+                        # Send light analytics (just the counters)
+                        payload["analytics"] = {
+                            "active_people": summary["active_people"],
+                            "people_in_roi": summary["people_in_roi"],
+                            "total_seen": summary["total_seen"],
+                            "men": summary["men"],
+                            "women": summary["women"],
+                        }
+
+                    if websocket.client_state.value == 1:
+                        await websocket.send_json(payload)
+                    
+                    await asyncio.sleep(0.005)
 
                 frame_idx += 1
                 # Small yield to let event loop (and keepalive pings) run

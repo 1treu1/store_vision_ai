@@ -186,6 +186,35 @@ class AnalyticsTracker:
         track["is_active"] = True
 
     def get_summary(self, video_timestamp: float):
+        # Maintain cumulative stats to offload frontend calculation
+        dwell_buckets = [
+            {"name": "<15s", "count": 0},
+            {"name": "15s-1m", "count": 0},
+            {"name": "1-5m", "count": 0},
+            {"name": ">5m", "count": 0},
+        ]
+        
+        # Zone unique visitors (Cumulative)
+        if not hasattr(self, "zone_visits"): self.zone_visits = {} 
+        
+        for tid, data in self.tracks.items():
+            # Dwell buckets
+            d = data["total_dwell"]
+            if d < 15: dwell_buckets[0]["count"] += 1
+            elif d < 60: dwell_buckets[1]["count"] += 1
+            elif d < 300: dwell_buckets[2]["count"] += 1
+            else: dwell_buckets[3]["count"] += 1
+            
+            # Record zone visit
+            if data["last_roi_id"] is not None:
+                if tid not in self.zone_visits: self.zone_visits[tid] = set()
+                self.zone_visits[tid].add(data["last_roi_id"])
+
+        zone_activity = {}
+        for tid, visited_rois in self.zone_visits.items():
+            for rid in visited_rois:
+                zone_activity[rid] = zone_activity.get(rid, 0) + 1
+
         people_in_roi = []
         for tid, data in self.tracks.items():
             if data["last_roi_id"] is not None:
@@ -201,13 +230,21 @@ class AnalyticsTracker:
 
         men   = sum(1 for t in self.tracks.values() if t["gender"] == "Male")
         women = sum(1 for t in self.tracks.values() if t["gender"] == "Female")
+        active_now = sum(1 for t in self.tracks.values() if t["is_active"])
+
+        if not hasattr(self, "peak_occupancy"): self.peak_occupancy = 0
+        self.peak_occupancy = max(self.peak_occupancy, active_now)
 
         return {
-            "active_people": sum(1 for t in self.tracks.values() if t["is_active"]),
+            "active_people": active_now,
             "people_in_roi": len(people_in_roi),
             "total_seen": len(self.tracks),
             "men": men,
             "women": women,
             "tracks": people_in_roi,
-            "id_map": self.yolo_map
+            "id_map": self.yolo_map,
+            "dwell_buckets": dwell_buckets,
+            "zone_activity": zone_activity,
+            "peak_occupancy": self.peak_occupancy,
+            "avg_dwell": round(sum(t["total_dwell"] for t in self.tracks.values()) / max(1, len(self.tracks)), 1)
         }

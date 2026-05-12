@@ -58,32 +58,45 @@ const ROISelector = ({ videoFile }) => {
         }));
       };
 
+      let lastHistoryUpdate = 0;
+
       socket.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        const now = Date.now();
         
-        // Merge: keep last known analytics if the new message doesn't include it
-        setAnalytics(prev => ({
-          ...prev,
-          ...data,
-          analytics: data.analytics ?? prev?.analytics,
-          status: data.status ?? prev?.status,
-          message: data.message ?? prev?.message
-        }));
-
+        // 1. Live Frame Update (High Frequency - every message)
         if (data.frame_image) {
           setLiveFrame(`data:image/jpeg;base64,${data.frame_image}`);
         }
 
-        // Accumulate history for charts (sample every ~10 frames to keep it light)
-        if (data.analytics && data.frame % 10 === 0) {
+        // 2. Summary Analytics Update (High Frequency - for HUD cards)
+        if (data.analytics || data.status) {
+          setAnalytics(prev => {
+            // Merge analytics keys individually to preserve heavy data (tracks, buckets) 
+            // during "light" updates from the backend
+            const mergedAnalytics = data.analytics ? {
+              ...(prev?.analytics || {}),
+              ...data.analytics
+            } : prev?.analytics;
+
+            return {
+              ...prev,
+              ...data,
+              analytics: mergedAnalytics,
+              status: data.status ?? prev?.status,
+            };
+          });
+        }
+
+        // 3. History Accumulation (Throttled - for charts)
+        // Memory optimization: Store ONLY scalars for charts, no track lists.
+        if (data.analytics && (now - lastHistoryUpdate > 1000 || data.frame % 15 === 0)) {
+          lastHistoryUpdate = now;
           setHistory(prev => {
             const point = {
               ts: data.timestamp || (data.frame / 30),
               active_people: data.analytics.active_people,
               people_in_roi: data.analytics.people_in_roi,
-              men: data.analytics.men,
-              women: data.analytics.women,
-              tracks: data.analytics.tracks || [],
             };
             const next = [...prev, point];
             return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
@@ -196,7 +209,9 @@ const ROISelector = ({ videoFile }) => {
                     <span style={{ fontSize: '0.65rem', color: t.gender === 'Male' ? '#60a5fa' : '#f472b6' }}>
                       {t.gender === 'Male' ? '♂' : t.gender === 'Female' ? '♀' : '?'} ID {t.id}
                     </span>
-                    <span style={{ fontSize: '0.65rem', fontWeight: 'bold' }}>{t.dwell_seconds}s</span>
+                    <span style={{ fontSize: '0.65rem', fontWeight: 'bold' }}>
+                      {t.dwell_seconds < 60 ? `${t.dwell_seconds}s` : `${(t.dwell_seconds / 60).toFixed(1)}m`}
+                    </span>
                   </div>
                 ))}
               </div>
