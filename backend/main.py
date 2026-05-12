@@ -4,8 +4,10 @@ import os
 import base64
 import asyncio
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+import shutil
+from pathlib import Path
 from dotenv import load_dotenv
 
 from src.ai.detector import PeopleDetector
@@ -31,23 +33,41 @@ detector = PeopleDetector(
 )
 gender_clf = GenderClassifier(model_path=os.getenv("GENDER_MODEL_PATH", None))
 
+# Ensure uploads directory exists
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
 
 def draw_annotations(frame, tracking_results, rois, tracker_state):
-    """Draw bounding boxes, labels, and ROI polygons onto the frame."""
+    """Draw elegant, HUD-style bounding boxes and ROI polygons."""
     annotated = frame.copy()
-
+    overlay = frame.copy()
+    
+    # Colors (BGR)
+    COLOR_PURPLE = (247, 85, 168)
+    COLOR_GREEN = (94, 197, 34)
+    COLOR_WHITE = (240, 240, 240)
+    COLOR_DARK = (42, 23, 15)  # #0f172a
+    
     # Draw ROI polygons
     for roi in rois:
         pts = [[p['x'], p['y']] for p in roi['points']] if roi['points'] and isinstance(roi['points'][0], dict) else roi['points']
         if len(pts) >= 3:
             pts_array = np.array(pts, np.int32)
-            cv2.polylines(annotated, [pts_array], isClosed=True, color=(168, 85, 247), thickness=2)
-            overlay = annotated.copy()
-            cv2.fillPoly(overlay, [pts_array], color=(168, 85, 247))
-            cv2.addWeighted(overlay, 0.15, annotated, 0.85, 0, annotated)
-            # ROI label
-            cv2.putText(annotated, roi['name'].upper(), tuple(pts_array[0]),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (168, 85, 247), 2)
+            # Technical border
+            cv2.polylines(annotated, [pts_array], isClosed=True, color=COLOR_PURPLE, thickness=1, lineType=cv2.LINE_AA)
+            # Soft fill on overlay
+            cv2.fillPoly(overlay, [pts_array], color=COLOR_PURPLE)
+            
+            # ROI label with small glass box
+            label = roi['name'].upper()
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            tx, ty = pts_array[0][0], pts_array[0][1] - 8
+            cv2.rectangle(annotated, (tx, ty - th - 6), (tx + tw + 8, ty + 4), COLOR_DARK, -1)
+            cv2.putText(annotated, label, (tx + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.45, COLOR_PURPLE, 1, cv2.LINE_AA)
+
+    # Apply ROI fill overlay (alpha blend)
+    cv2.addWeighted(overlay, 0.08, annotated, 0.92, 0, annotated)
 
     # Draw bounding boxes for each tracked person
     if tracking_results.boxes.id is not None:
@@ -56,32 +76,43 @@ def draw_annotations(frame, tracking_results, rois, tracker_state):
 
         for box, track_id in zip(boxes, ids):
             x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-            feet_x = (x1 + x2) / 2
-            feet_y = y2
+            
+            in_roi = any(PeopleDetector.is_box_inside_roi(box, roi['points']) for roi in rois)
+            color = COLOR_GREEN if in_roi else COLOR_WHITE
+            
+            # 1. Subtle full rectangle
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 1, cv2.LINE_AA)
+            
+            # 2. Technical HUD Corners (thicker than the main box)
+            l = min(15, (x2-x1)//4, (y2-y1)//4)
+            # TL
+            cv2.line(annotated, (x1, y1), (x1 + l, y1), color, 2, cv2.LINE_AA)
+            cv2.line(annotated, (x1, y1), (x1, y1 + l), color, 2, cv2.LINE_AA)
+            # TR
+            cv2.line(annotated, (x2, y1), (x2 - l, y1), color, 2, cv2.LINE_AA)
+            cv2.line(annotated, (x2, y1), (x2, y1 + l), color, 2, cv2.LINE_AA)
+            # BL
+            cv2.line(annotated, (x1, y2), (x1 + l, y2), color, 2, cv2.LINE_AA)
+            cv2.line(annotated, (x1, y2), (x1, y2 - l), color, 2, cv2.LINE_AA)
+            # BR
+            cv2.line(annotated, (x2, y2), (x2 - l, y2), color, 2, cv2.LINE_AA)
+            cv2.line(annotated, (x2, y2), (x2, y2 - l), color, 2, cv2.LINE_AA)
 
-            # Check if any point of the bbox is inside any ROI
-            in_roi = any(
-                PeopleDetector.is_box_inside_roi(box, roi['points'])
-                for roi in rois
-            )
-
-            # Vivid high-contrast colors: lime-green inside ROI, white outside
-            color     = (0, 255, 128) if in_roi else (255, 255, 255)
-            bg_color  = (0, 0, 0)   # dark outline for contrast
-
-            # Draw dark outline (thickness + 2) first, then the vivid color on top
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), bg_color, 5)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
-
-            # Gender label (M/F/?) with icon-like prefix
+            # 3. Info Label (Modern HUD style)
             gender = tracker_state.get(track_id, {}).get('gender', 'Unknown')
-            gender_icon = '♂' if gender == 'Male' else ('♀' if gender == 'Female' else '?')
+            g_icon = 'M' if gender == 'Male' else ('F' if gender == 'Female' else '?')
             dwell = tracker_state.get(track_id, {}).get('dwell_seconds', 0)
-            label = f"{gender_icon} ID:{track_id}  {dwell:.1f}s" if in_roi else f"{gender_icon} ID:{track_id}"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            cv2.rectangle(annotated, (x1, y1 - th - 12), (x1 + tw + 6, y1), bg_color, -1)
-            cv2.putText(annotated, label, (x1 + 3, y1 - 6),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+            
+            label = f"ID:{track_id} [{g_icon}]"
+            if in_roi: label += f" {dwell:.1f}S"
+            
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            # Background box
+            cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw + 8, y1), COLOR_DARK, -1)
+            # Label text
+            cv2.putText(annotated, label, (x1 + 4, y1 - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+
+    return annotated
 
     return annotated
 
@@ -89,6 +120,23 @@ def draw_annotations(frame, tracking_results, rois, tracker_state):
 @app.get("/")
 async def root():
     return {"status": "online", "model": "YOLOv8n"}
+
+
+@app.post("/upload")
+async def upload_video(file: UploadFile = File(...)):
+    """Upload a video file to the server."""
+    try:
+        file_path = UPLOAD_DIR / file.filename
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        return {
+            "filename": file.filename,
+            "path": str(file_path.absolute()),
+            "status": "success"
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.websocket("/ws/analytics")
@@ -102,7 +150,10 @@ async def websocket_endpoint(websocket: WebSocket):
         rois = config.get("rois", [])
 
         if not video_path or not os.path.exists(video_path):
-            await websocket.send_json({"error": f"Video not found: {video_path}"})
+            await websocket.send_json({
+                "status": "error", 
+                "message": f"Video not found on server: {video_path}"
+            })
             return
 
         cap = cv2.VideoCapture(video_path)
@@ -138,6 +189,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({
                     "status": "processing",
                     "frame": frame_idx,
+                    "timestamp": video_timestamp,
                     "total_frames": total_frames,
                     "frame_image": frame_b64,
                     "analytics": summary

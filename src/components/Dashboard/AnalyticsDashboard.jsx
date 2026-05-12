@@ -159,14 +159,44 @@ const AnalyticsDashboard = ({ isOpen, onClose, analytics, history, areas }) => {
         {/* People over time */}
         <div>
           <SectionTitle>OCCUPANCY OVER TIME</SectionTitle>
-          <ResponsiveContainer width="100%" height={140}>
-            <LineChart data={history} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#64748b' }} tickFormatter={v => `${v.toFixed(0)}s`} />
-              <YAxis tick={{ fontSize: 9, fill: '#64748b' }} />
-              <Tooltip contentStyle={tooltipStyle} labelFormatter={v => `t=${parseFloat(v).toFixed(1)}s`} />
-              <Line type="monotone" dataKey="active_people" stroke="#a855f7" strokeWidth={2} dot={false} name="Active" />
-              <Line type="monotone" dataKey="people_in_roi" stroke="#10b981" strokeWidth={2} dot={false} name="In ROI" />
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={history} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis 
+                dataKey="ts" 
+                type="number"
+                domain={['auto', 'auto']}
+                tick={{ fontSize: 9, fill: '#64748b' }} 
+                tickFormatter={v => `${Math.round(v)}s`}
+                minTickGap={30}
+              />
+              <YAxis 
+                domain={[0, 'auto']}
+                allowDecimals={false}
+                tick={{ fontSize: 9, fill: '#64748b' }} 
+              />
+              <Tooltip 
+                contentStyle={tooltipStyle} 
+                labelFormatter={v => `Time: ${parseFloat(v).toFixed(1)}s`} 
+              />
+              <Line 
+                type="monotone" 
+                dataKey="active_people" 
+                stroke="#a855f7" 
+                strokeWidth={2} 
+                dot={false} 
+                name="Active" 
+                animationDuration={300}
+              />
+              <Line 
+                type="monotone" 
+                dataKey="people_in_roi" 
+                stroke="#10b981" 
+                strokeWidth={2} 
+                dot={false} 
+                name="In ROI" 
+                animationDuration={300}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>

@@ -52,3 +52,5 @@ models/
 # DeepFace / InsightFace auto-downloaded weights cache
 .deepface/
 *.part
+.venv/
+.vscode/

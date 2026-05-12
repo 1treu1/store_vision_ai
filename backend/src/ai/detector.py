@@ -1,11 +1,14 @@
 import cv2
 import numpy as np
+import torch
 from ultralytics import YOLO
 
 
 class PeopleDetector:
     def __init__(self, model_path="yolov8n.pt", conf=0.4, iou=0.5):
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.model = YOLO(model_path)
+        self.model.to(self.device)
         self.classes = [0]  # 0 is 'person' in COCO dataset
         self.conf = conf   # Minimum confidence threshold
         self.iou = iou     # NMS IoU threshold

@@ -21,63 +21,94 @@ const ROISelector = ({ videoFile }) => {
   const [history, setHistory] = useState([]);
   const [dashboardOpen, setDashboardOpen] = useState(false);
 
-  const handleProcess = useCallback(() => {
+  const handleProcess = useCallback(async () => {
+    if (!videoFile) return;
+
     setIsProcessing(true);
-    setAnalytics({ status: 'connecting' });
+    setAnalytics({ status: 'uploading' });
     setLiveFrame(null);
     setHistory([]);
 
-    const socket = new WebSocket('ws://localhost:8000/ws/analytics');
+    try {
+      // 1. Upload the file first
+      const formData = new FormData();
+      formData.append('file', videoFile);
 
-    socket.onopen = () => {
-      socket.send(JSON.stringify({
-        video_path: 'C:/Users/luis.medina/PycharmProjects/store_vision_ai/test_video_short.mp4',
-        rois: areas.map(a => ({ id: a.id, points: a.points, name: a.name }))
-      }));
-    };
+      const uploadResponse = await fetch('http://localhost:8000/upload', {
+        method: 'POST',
+        body: formData,
+      });
 
-    socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      // Merge: keep last known analytics if the new message doesn't include it
-      setAnalytics(prev => ({
-        ...prev,
-        ...data,
-        analytics: data.analytics ?? prev?.analytics,
-      }));
+      const uploadData = await uploadResponse.json();
 
-      if (data.frame_image) {
-        setLiveFrame(`data:image/jpeg;base64,${data.frame_image}`);
+      if (uploadData.status === 'error') {
+        throw new Error(uploadData.message || 'Upload failed');
       }
 
-      // Accumulate history for charts (sample every ~10 frames to keep it light)
-      if (data.analytics && data.frame % 10 === 0) {
-        setHistory(prev => {
-          const point = {
-            ts: data.frame / (data.total_frames / 30),
-            active_people: data.analytics.active_people,
-            people_in_roi: data.analytics.people_in_roi,
-            men: data.analytics.men,
-            women: data.analytics.women,
-            tracks: data.analytics.tracks || [],
-          };
-          const next = [...prev, point];
-          return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
-        });
-      }
+      const serverVideoPath = uploadData.path;
 
-      if (data.status === 'completed' || data.status === 'error') {
+      // 2. Connect to WebSocket with the server-side path
+      setAnalytics({ status: 'connecting' });
+      const socket = new WebSocket('ws://localhost:8000/ws/analytics');
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({
+          video_path: serverVideoPath,
+          rois: areas.map(a => ({ id: a.id, points: a.points, name: a.name }))
+        }));
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        // Merge: keep last known analytics if the new message doesn't include it
+        setAnalytics(prev => ({
+          ...prev,
+          ...data,
+          analytics: data.analytics ?? prev?.analytics,
+          status: data.status ?? prev?.status,
+          message: data.message ?? prev?.message
+        }));
+
+        if (data.frame_image) {
+          setLiveFrame(`data:image/jpeg;base64,${data.frame_image}`);
+        }
+
+        // Accumulate history for charts (sample every ~10 frames to keep it light)
+        if (data.analytics && data.frame % 10 === 0) {
+          setHistory(prev => {
+            const point = {
+              ts: data.timestamp || (data.frame / 30),
+              active_people: data.analytics.active_people,
+              people_in_roi: data.analytics.people_in_roi,
+              men: data.analytics.men,
+              women: data.analytics.women,
+              tracks: data.analytics.tracks || [],
+            };
+            const next = [...prev, point];
+            return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+          });
+        }
+
+        if (data.status === 'completed' || data.status === 'error') {
+          setIsProcessing(false);
+          socket.close();
+        }
+      };
+
+      socket.onerror = () => {
+        setAnalytics({ status: 'error', message: 'WebSocket connection failed' });
         setIsProcessing(false);
-        socket.close();
-      }
-    };
+      };
 
-    socket.onerror = () => {
-      setAnalytics({ status: 'error', message: 'Cannot connect to backend' });
+      socket.onclose = () => setIsProcessing(false);
+
+    } catch (err) {
+      console.error('Processing error:', err);
+      setAnalytics({ status: 'error', message: err.message });
       setIsProcessing(false);
-    };
-
-    socket.onclose = () => setIsProcessing(false);
-  }, [areas]);
+    }
+  }, [areas, videoFile]);
 
   const progress = analytics?.total_frames > 0
     ? Math.round((analytics.frame / analytics.total_frames) * 100)
