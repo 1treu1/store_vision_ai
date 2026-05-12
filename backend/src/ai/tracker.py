@@ -1,75 +1,213 @@
+import time
+import numpy as np
 from .detector import PeopleDetector
 
 
 class AnalyticsTracker:
-    def __init__(self):
-        # track_id (native int) -> { "start_video_ts", "last_video_ts", "roi_id", "gender" }
-        self.active_tracks = {}
+    def __init__(self, recovery_max_time=10.0):
+        # track_id -> { "last_pos", "velocity", "total_dwell", "last_roi_id", "last_video_ts", "is_active", "gender" }
+        self.tracks = {}
+        self.next_mid = 1
+        # YOLO ID -> Persistent MID
+        self.yolo_map = {}
+        self.recovery_max_time = recovery_max_time
+
+    def _get_centroid(self, box):
+        x1, y1, x2, y2 = box
+        return ((x1 + x2) / 2, (y1 + y2) / 2)
+
+    def _calculate_iou(self, box1, box2):
+        x1_1, y1_1, x1_2, y1_2 = box1
+        x2_1, y2_1, x2_2, y2_2 = box2
+        
+        xi1 = max(x1_1, x2_1)
+        yi1 = max(y1_1, y2_1)
+        xi2 = min(x1_2, x2_2)
+        yi2 = min(y1_2, y2_2)
+        
+        inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+        box1_area = (x1_2 - x1_1) * (y1_2 - y1_1)
+        box2_area = (x2_2 - x2_1) * (y2_2 - y2_1)
+        
+        return inter_area / float(box1_area + box2_area - inter_area + 1e-6)
 
     def update(self, tracking_results, rois, video_timestamp: float,
                frame_bgr=None, gender_classifier=None):
-        """
-        Update stats based on tracking results and ROI definitions.
+        
+        current_detections = []
+        if tracking_results.boxes.id is not None:
+            boxes = tracking_results.boxes.xyxy.cpu().numpy()
+            yolo_ids = [int(i) for i in tracking_results.boxes.id.cpu().numpy()]
+            for box, yid in zip(boxes, yolo_ids):
+                current_detections.append({
+                    "box": box,
+                    "yid": yid,
+                    "centroid": self._get_centroid(box)
+                })
 
-        tracking_results: Results from YOLOv8 track
-        rois: List of { id, points, name }
-        video_timestamp: Current position in the video in seconds (frame_idx / fps)
-        frame_bgr: Full frame for gender crop (optional)
-        gender_classifier: GenderClassifier instance (optional)
-        """
-        if tracking_results.boxes.id is None:
-            return self.get_summary(video_timestamp)
+        # 1. Prediction Step: Move all existing tracks based on their velocity
+        # BUT only update time/dwell for GHOSTS. Active tracks update in _update_track.
+        for tid, track in self.tracks.items():
+            dt = video_timestamp - track["last_video_ts"]
+            if dt > 0:
+                vx, vy = track.get("velocity", (0, 0))
+                # Predict new position
+                track["last_pos"] = (
+                    track["last_pos"][0] + vx * dt,
+                    track["last_pos"][1] + vy * dt
+                )
+                
+                # If they are GHOSTS, update their dwell time and timestamp here
+                if not track["is_active"]:
+                    if track["last_roi_id"] is not None:
+                        track["total_dwell"] += dt
+                    track["last_video_ts"] = video_timestamp
 
-        boxes = tracking_results.boxes.xyxy.cpu().numpy()
-        ids = [int(i) for i in tracking_results.boxes.id.cpu().numpy()]
+        # 2. Association Step: Match YOLO detections to existing tracks
+        # We prioritize matching by YOLO ID first (if we have a mapping)
+        unmatched_detections = []
+        matched_tids = set()
 
-        for box, track_id in zip(boxes, ids):
-            # Check any of the 5 candidate points (4 corners + centroid) against each ROI
-            current_roi_id = None
-            for roi in rois:
-                if PeopleDetector.is_box_inside_roi(box, roi['points']):
-                    current_roi_id = roi['id']
-                    break
+        for det in current_detections:
+            yid = det["yid"]
+            matched = False
+            
+            # A. Try exact YOLO ID match
+            if yid in self.yolo_map:
+                tid = self.yolo_map[yid]
+                if tid in self.tracks:
+                    self._update_track(tid, det, rois, video_timestamp)
+                    matched_tids.add(tid)
+                    matched = True
+            
+            # B. Try Spatial Match (Proximity/IOU) if not matched by ID
+            if not matched:
+                best_tid = None
+                best_score = 0
+                
+                for tid, track in self.tracks.items():
+                    if tid in matched_tids: continue
+                    
+                    # Distance Score
+                    dist = np.sqrt((det["centroid"][0] - track["last_pos"][0])**2 + 
+                                   (det["centroid"][1] - track["last_pos"][1])**2)
+                    
+                    # IOU Score (if we had a box)
+                    iou = 0
+                    if "last_box" in track:
+                        iou = self._calculate_iou(det["box"], track["last_box"])
+                    
+                    # Heuristic score
+                    score = iou * 100 + (1.0 / (dist + 1.0)) * 500
+                    
+                    if score > best_score and (dist < 300 or iou > 0.3):
+                        best_score = score
+                        best_tid = tid
+                
+                if best_tid is not None:
+                    print(f"[TRACKER] Re-associating track {best_tid} to new YOLO ID {yid}")
+                    self.yolo_map[yid] = best_tid
+                    self._update_track(best_tid, det, rois, video_timestamp)
+                    matched_tids.add(best_tid)
+                    matched = True
+                else:
+                    unmatched_detections.append(det)
 
-            if track_id not in self.active_tracks:
-                # Classify gender once when the person is first detected
-                gender = 'Unknown'
-                if gender_classifier is not None and frame_bgr is not None:
-                    gender = gender_classifier.predict(frame_bgr, box)
+        # 3. Create new tracks for unmatched detections
+        for det in unmatched_detections:
+            tid = self.next_mid
+            self.next_mid += 1
+            print(f"[TRACKER] New track created: {tid} (YOLO {det['yid']})")
+            
+            gender = 'Unknown'
+            if gender_classifier and frame_bgr is not None:
+                gender = gender_classifier.predict(frame_bgr, det["box"])
+                
+            self.tracks[tid] = {
+                "gender": gender,
+                "total_dwell": 0.0,
+                "last_roi_id": None, # Will be set in _update_track
+                "last_video_ts": video_timestamp,
+                "last_pos": det["centroid"],
+                "last_box": det["box"],
+                "velocity": (0, 0),
+                "is_active": True
+            }
+            self.yolo_map[det["yid"]] = tid
+            self._update_track(tid, det, rois, video_timestamp)
+            matched_tids.add(tid)
 
-                self.active_tracks[track_id] = {
-                    "start_video_ts": video_timestamp,
-                    "last_video_ts": video_timestamp,
-                    "roi_id": current_roi_id,
-                    "gender": gender
-                }
-            else:
-                self.active_tracks[track_id]["last_video_ts"] = video_timestamp
-                self.active_tracks[track_id]["roi_id"] = current_roi_id
+        # 4. Mark unmatched tracks as inactive (Ghosts)
+        for tid, track in self.tracks.items():
+            if tid not in matched_tids:
+                if track["is_active"]:
+                    print(f"[TRACKER] Track {tid} lost -> Ghost Mode")
+                    track["is_active"] = False
+
+        # 5. Cleanup expired tracks
+        expired = [tid for tid, track in self.tracks.items() 
+                   if video_timestamp - track["last_video_ts"] > self.recovery_max_time]
+        for tid in expired:
+            print(f"[TRACKER] Deleting track {tid} (timeout)")
+            del self.tracks[tid]
+            # Remove from yolo_map
+            yids = [y for y, m in self.yolo_map.items() if m == tid]
+            for y in yids: del self.yolo_map[y]
 
         return self.get_summary(video_timestamp)
 
-    def get_summary(self, video_timestamp: float):
-        """Returns a JSON-safe summary of current analytics."""
-        people_in_roi = [
-            {
-                "id": tid,
-                "roi_id": data["roi_id"],
-                "dwell_seconds": round(video_timestamp - data["start_video_ts"], 1),
-                "gender": data["gender"]
-            }
-            for tid, data in self.active_tracks.items()
-            if data["roi_id"] is not None
-        ]
+    def _update_track(self, tid, det, rois, ts):
+        track = self.tracks[tid]
+        dt = ts - track["last_video_ts"]
+        
+        # Calculate ROI
+        current_roi_id = None
+        for roi in rois:
+            if PeopleDetector.is_box_inside_roi(det["box"], roi['points']):
+                current_roi_id = roi['id']
+                break
 
-        men   = sum(1 for t in self.active_tracks.values() if t["gender"] == "Male")
-        women = sum(1 for t in self.active_tracks.values() if t["gender"] == "Female")
+        if dt > 0 and track["is_active"]:
+            # Update velocity
+            vx = (det["centroid"][0] - track["last_pos"][0]) / dt
+            vy = (det["centroid"][1] - track["last_pos"][1]) / dt
+            alpha = 0.7
+            old_vx, old_vy = track.get("velocity", (0,0))
+            track["velocity"] = (alpha * vx + (1-alpha)*old_vx, alpha * vy + (1-alpha)*old_vy)
+            
+            # Accumulate dwell
+            if track["last_roi_id"] is not None:
+                track["total_dwell"] += dt
+
+        track["last_pos"] = det["centroid"]
+        track["last_box"] = det["box"]
+        track["last_roi_id"] = current_roi_id
+        track["last_video_ts"] = ts
+        track["is_active"] = True
+
+    def get_summary(self, video_timestamp: float):
+        people_in_roi = []
+        for tid, data in self.tracks.items():
+            if data["last_roi_id"] is not None:
+                lx, ly = data["last_pos"]
+                people_in_roi.append({
+                    "id": tid,
+                    "roi_id": data["last_roi_id"],
+                    "dwell_seconds": round(float(data["total_dwell"]), 1),
+                    "gender": data["gender"],
+                    "is_ghost": not data["is_active"],
+                    "last_pos": (float(lx), float(ly))
+                })
+
+        men   = sum(1 for t in self.tracks.values() if t["gender"] == "Male")
+        women = sum(1 for t in self.tracks.values() if t["gender"] == "Female")
 
         return {
-            "active_people": len(self.active_tracks),
+            "active_people": sum(1 for t in self.tracks.values() if t["is_active"]),
             "people_in_roi": len(people_in_roi),
-            "total_seen": len(self.active_tracks),
+            "total_seen": len(self.tracks),
             "men": men,
             "women": women,
-            "tracks": people_in_roi
+            "tracks": people_in_roi,
+            "id_map": self.yolo_map
         }

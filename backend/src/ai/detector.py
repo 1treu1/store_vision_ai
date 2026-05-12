@@ -26,6 +26,7 @@ class PeopleDetector:
             classes=self.classes,
             conf=self.conf,
             iou=self.iou,
+            tracker="botsort.yaml",  # BoT-SORT is more robust for re-identification
             verbose=False
         )
         return results[0]
